@@ -44,10 +44,29 @@ type CreateClusterRequest struct {
 	Replicas int      `json:"replicas"`
 }
 
+type ImportClusterRequest struct {
+	Nodes    []string `json:"nodes" validate:"required"`
+	Password string   `json:"password"`
+}
+
 type ClusterHandler struct {
 	s store.Store
 }
 
+type ListClusterResponse struct {
+	Clusters []string `json:"clusters"`
+}
+
+type CreateClusterResponse struct {
+	Cluster store.Cluster `json:"cluster"`
+}
+
+//	@Summary		List clusters
+//	@Description	List all clusters
+//	@Tags			cluster
+//	@Param			namespace	path		string										true	"Namespace"
+//	@Success		200			{object}	helper.Response{data=ListClusterResponse}	"集群列表"
+//	@Router			/namespaces/{namespace}/clusters [get]
 func (handler *ClusterHandler) List(c *gin.Context) {
 	namespace := c.Param("namespace")
 	clusters, err := handler.s.ListCluster(c, namespace)
@@ -58,11 +77,27 @@ func (handler *ClusterHandler) List(c *gin.Context) {
 	helper.ResponseOK(c, gin.H{"clusters": clusters})
 }
 
+//	@Summary		Get a cluster
+//	@Description	Get a cluster by providing cluster name
+//	@Tags			cluster
+//	@Produce		json
+//	@Param			namespace	path		string	true	"Namespace"
+//	@Param			cluster		path		string	true	"Cluster"
+//	@Success		200			{object}	helper.Response{data=CreateClusterResponse}
+//	@Router			/namespaces/{namespace}/clusters/{cluster} [get]
 func (handler *ClusterHandler) Get(c *gin.Context) {
 	cluster, _ := c.MustGet(consts.ContextKeyCluster).(*store.Cluster)
 	helper.ResponseOK(c, gin.H{"cluster": cluster})
 }
 
+//	@Summary		Create a cluster
+//	@Description	Create a cluster
+//	@Tags			cluster
+//	@Produce		json
+//	@Param			namespace	path		string					true	"Namespace"
+//	@Param			cluster		body		CreateClusterRequest	true	"Cluster"
+//	@Success		201			{object}	helper.Response{data=CreateClusterResponse}
+//	@Router			/namespaces/{namespace}/clusters [post]
 func (handler *ClusterHandler) Create(c *gin.Context) {
 	namespace := c.Param("namespace")
 	var req CreateClusterRequest
@@ -106,6 +141,13 @@ func (handler *ClusterHandler) Create(c *gin.Context) {
 	helper.ResponseCreated(c, gin.H{"cluster": cluster})
 }
 
+//	@Summary		Remove a cluster
+//	@Description	Remove a cluster by providing cluster name
+//	@Tags			cluster
+//	@Param			namespace	path	string	true	"Namespace"
+//	@Param			cluster		path	string	true	"Cluster"
+//	@Router			/namespaces/{namespace}/clusters/{cluster} [delete]
+//	@Success		204
 func (handler *ClusterHandler) Remove(c *gin.Context) {
 	namespace := c.Param("namespace")
 	cluster := c.Param("cluster")
@@ -117,6 +159,12 @@ func (handler *ClusterHandler) Remove(c *gin.Context) {
 	helper.ResponseNoContent(c)
 }
 
+//	@Summary		Migrate slot
+//	@Description	Migrate slot to another node
+//	@Tags			cluster
+//	@Param			namespace	path	string				true	"Namespace"
+//	@Param			migrate		body	MigrateSlotRequest	true	"Migrate"
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/migrate [post]
 func (handler *ClusterHandler) MigrateSlot(c *gin.Context) {
 	namespace := c.Param("namespace")
 	cluster, _ := c.MustGet(consts.ContextKeyCluster).(*store.Cluster)
@@ -146,13 +194,19 @@ func (handler *ClusterHandler) MigrateSlot(c *gin.Context) {
 	helper.ResponseOK(c, gin.H{"cluster": cluster})
 }
 
+//	@Summary		Import nodes to a cluster
+//	@Description	Import nodes to a specified, existing cluster
+//	@Tags			cluster
+//	@Produce		json
+//	@Param			namespace	path		string					true	"Namespace"
+//	@Param			cluster		path		string					true	"Cluster"
+//	@Param			import		body		ImportClusterRequest	true	"Import Info"
+//	@Success		200			{object}	helper.Response{data=CreateClusterResponse}
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/import [post]
 func (handler *ClusterHandler) Import(c *gin.Context) {
 	namespace := c.Param("namespace")
 	clusterName := c.Param("cluster")
-	var req struct {
-		Nodes    []string `json:"nodes" validate:"required"`
-		Password string   `json:"password"`
-	}
+	var req ImportClusterRequest
 	if err := c.BindJSON(&req); err != nil {
 		helper.ResponseBadRequest(c, err)
 		return

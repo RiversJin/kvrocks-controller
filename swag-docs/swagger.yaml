@@ -1,0 +1,674 @@
+basePath: /api/v1
+definitions:
+  api.CreateClusterRequest:
+    properties:
+      name:
+        type: string
+      nodes:
+        items:
+          type: string
+        type: array
+      password:
+        type: string
+      replicas:
+        type: integer
+    required:
+    - name
+    - nodes
+    type: object
+  api.CreateClusterResponse:
+    properties:
+      cluster:
+        $ref: '#/definitions/store.Cluster'
+    type: object
+  api.CreateNamespaceRequest:
+    properties:
+      namespace:
+        type: string
+    required:
+    - namespace
+    type: object
+  api.CreateNamespaceResponse:
+    properties:
+      namespace:
+        type: string
+    type: object
+  api.CreateNodeRequest:
+    properties:
+      addr:
+        type: string
+      password:
+        type: string
+      role:
+        type: string
+    required:
+    - addr
+    type: object
+  api.CreateShardRequest:
+    properties:
+      nodes:
+        items:
+          type: string
+        type: array
+      password:
+        type: string
+    required:
+    - nodes
+    type: object
+  api.FailoverRequest:
+    properties:
+      preferred_node_id:
+        type: string
+    type: object
+  api.FailoverResponse:
+    properties:
+      new_master_id:
+        type: string
+    type: object
+  api.GetShardResponse:
+    properties:
+      shard:
+        $ref: '#/definitions/store.Shard'
+    type: object
+  api.ImportClusterRequest:
+    properties:
+      nodes:
+        items:
+          type: string
+        type: array
+      password:
+        type: string
+    required:
+    - nodes
+    type: object
+  api.ListClusterResponse:
+    properties:
+      clusters:
+        items:
+          type: string
+        type: array
+    type: object
+  api.ListNamespaceResponse:
+    properties:
+      namespaces:
+        items:
+          type: string
+        type: array
+    type: object
+  api.ListNodeResponse:
+    properties:
+      nodes:
+        items: {}
+        type: array
+    type: object
+  api.ListShardResponse:
+    properties:
+      shards:
+        items:
+          $ref: '#/definitions/store.Shard'
+        type: array
+    type: object
+  api.MigrateSlotRequest:
+    properties:
+      slot:
+        type: integer
+      slot_only:
+        type: boolean
+      target:
+        type: integer
+    required:
+    - slot
+    - target
+    type: object
+  go_uber_org_atomic.Int64:
+    type: object
+  helper.Error:
+    properties:
+      message:
+        type: string
+    type: object
+  helper.Response:
+    description: General Response Structure
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/helper.Error'
+    type: object
+  store.Cluster:
+    properties:
+      name:
+        type: string
+      shards:
+        items:
+          $ref: '#/definitions/store.Shard'
+        type: array
+      version:
+        $ref: '#/definitions/go_uber_org_atomic.Int64'
+    type: object
+  store.Shard:
+    description: Node role
+    properties:
+      migrating_slot:
+        type: integer
+      nodes:
+        items: {}
+        type: array
+      slot_ranges:
+        items:
+          $ref: '#/definitions/store.SlotRange'
+        type: array
+      target_shard_index:
+        type: integer
+    type: object
+  store.SlotRange:
+    properties:
+      start:
+        type: integer
+      stop:
+        type: integer
+    type: object
+info:
+  contact: {}
+  title: Kvrocks Controller API
+  version: "1.0"
+paths:
+  /namespaces:
+    get:
+      description: List all namespaces
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ListNamespaceResponse'
+              type: object
+      summary: List namespaces
+      tags:
+      - namespace
+    post:
+      consumes:
+      - application/json
+      description: Create a namespace
+      parameters:
+      - description: Namespace
+        in: body
+        name: namespace
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateNamespaceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.CreateNamespaceResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/helper.Error'
+      summary: Create a namespace
+      tags:
+      - namespace
+  /namespaces/{namespace}:
+    delete:
+      description: Remove a namespace
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Remove a namespace
+      tags:
+      - namespace
+    get:
+      description: Check if the namespace exists
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+      summary: Check namespace exists
+      tags:
+      - namespace
+  /namespaces/{namespace}/clusters:
+    get:
+      description: List all clusters
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      responses:
+        "200":
+          description: 集群列表
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ListClusterResponse'
+              type: object
+      summary: List clusters
+      tags:
+      - cluster
+    post:
+      description: Create a cluster
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: body
+        name: cluster
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.CreateClusterResponse'
+              type: object
+      summary: Create a cluster
+      tags:
+      - cluster
+  /namespaces/{namespace}/clusters/{cluster}:
+    delete:
+      description: Remove a cluster by providing cluster name
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Remove a cluster
+      tags:
+      - cluster
+    get:
+      description: Get a cluster by providing cluster name
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.CreateClusterResponse'
+              type: object
+      summary: Get a cluster
+      tags:
+      - cluster
+  /namespaces/{namespace}/clusters/{cluster}/import:
+    post:
+      description: Import nodes to a specified, existing cluster
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Import Info
+        in: body
+        name: import
+        required: true
+        schema:
+          $ref: '#/definitions/api.ImportClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.CreateClusterResponse'
+              type: object
+      summary: Import nodes to a cluster
+      tags:
+      - cluster
+  /namespaces/{namespace}/clusters/{cluster}/migrate:
+    post:
+      description: Migrate slot to another node
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Migrate
+        in: body
+        name: migrate
+        required: true
+        schema:
+          $ref: '#/definitions/api.MigrateSlotRequest'
+      responses: {}
+      summary: Migrate slot
+      tags:
+      - cluster
+  /namespaces/{namespace}/clusters/{cluster}/shards:
+    get:
+      description: List all shards
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      responses:
+        "200":
+          description: 分片列表
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ListShardResponse'
+              type: object
+      summary: List shards
+      tags:
+      - shard
+    post:
+      consumes:
+      - application/json
+      description: Create a shard by providing nodes
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Create Shard Request
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateShardRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.Shard'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/helper.Error'
+      summary: Create a shard
+      tags:
+      - shard
+  /namespaces/{namespace}/clusters/{cluster}/shards/{shard}:
+    delete:
+      consumes:
+      - application/json
+      description: Remove a shard by providing shard index
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard Index
+        in: path
+        name: shard
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/helper.Error'
+      summary: Remove a shard
+      tags:
+      - shard
+    get:
+      description: Get a shard by providing shard index
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard Index
+        in: path
+        name: shard
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.GetShardResponse'
+              type: object
+      summary: Get a shard
+      tags:
+      - shard
+  /namespaces/{namespace}/clusters/{cluster}/shards/{shard}/failover:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard Index
+        in: path
+        name: shard
+        required: true
+        type: integer
+      - description: Failover Request
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.FailoverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.FailoverResponse'
+              type: object
+      summary: Execute failover on a target shard
+      tags:
+      - shard
+  /namespaces/{namespace}/clusters/{cluster}/shards/{shard}/nodes:
+    delete:
+      description: Remove a node from a specific shard of a cluster
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard
+        in: path
+        name: shard
+        required: true
+        type: integer
+      - description: Node ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      summary: Remove node
+      tags:
+      - node
+    get:
+      description: List all nodes
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard
+        in: path
+        name: shard
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/helper.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ListNodeResponse'
+              type: object
+      summary: List nodes
+      tags:
+      - node
+    post:
+      consumes:
+      - application/json
+      description: Create a new node in a specific shard of a cluster
+      parameters:
+      - description: Namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Cluster
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Shard
+        in: path
+        name: shard
+        required: true
+        type: integer
+      - description: Node
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+      summary: Create node
+      tags:
+      - node
+swagger: "2.0"

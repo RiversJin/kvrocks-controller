@@ -72,12 +72,28 @@ if test -z "$TARGET_ARCH"; then
     esac
 fi
 
+function die(){
+    echo "Error: $1"
+    exit 1
+}
+
 GO_PROJECT=github.com/apache/kvrocks-controller
 BUILD_DIR=./_build
 VERSION=`cat VERSION.txt`
 
 SERVER_TARGET_NAME=kvctl-server
 CLIENT_TARGET_NAME=kvctl
+
+function generate_swag(){
+    if ! command -v swag &> /dev/null; then
+        echo "swag is not installed, installing..."
+        go install github.com/swaggo/swag/cmd/swag@latest
+    fi
+
+    swag init -g route.go -d server -o swag-docs --parseDependency --parseInternal
+}
+
+generate_swag || die "Failed to generate swag docs"
 
 for TARGET_NAME in "$SERVER_TARGET_NAME" "$CLIENT_TARGET_NAME"; do
     if [[ "$TARGET_NAME" == "$SERVER_TARGET_NAME" ]]; then

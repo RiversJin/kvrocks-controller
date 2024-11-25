@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/apache/kvrocks-controller/config"
 	"github.com/apache/kvrocks-controller/controller"
@@ -96,6 +97,7 @@ func (srv *Server) startAPIServer() {
 		Handler: srv.engine,
 	}
 	go func() {
+		logger.Get().Info("API server is running", zap.String("addr", srv.config.Addr))
 		if err := httpServer.ListenAndServe(); err != nil {
 			if err == http.ErrServerClosed {
 				return

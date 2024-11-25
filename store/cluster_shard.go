@@ -33,6 +33,7 @@ import (
 	"github.com/apache/kvrocks-controller/consts"
 )
 
+// @Description Node role
 type Shard struct {
 	Nodes            []Node      `json:"nodes"`
 	SlotRanges       []SlotRange `json:"slot_ranges"`

@@ -36,6 +36,15 @@ type NamespaceHandler struct {
 	s store.Store
 }
 
+type ListNamespaceResponse struct {
+	Namespaces []string `json:"namespaces"`
+}
+
+//	@Summary		List namespaces
+//	@Description	List all namespaces
+//	@Tags			namespace
+//	@Router			/namespaces [get]
+//	@Success		200	{object}	helper.Response{data=ListNamespaceResponse}
 func (handler *NamespaceHandler) List(c *gin.Context) {
 	namespaces, err := handler.s.ListNamespace(c)
 	if err != nil {
@@ -45,6 +54,13 @@ func (handler *NamespaceHandler) List(c *gin.Context) {
 	helper.ResponseOK(c, gin.H{"namespaces": namespaces})
 }
 
+//	@Summary		Check namespace exists
+//	@Description	Check if the namespace exists
+//	@Tags			namespace
+//	@Param			namespace	path	string	true	"Namespace"
+//	@Router			/namespaces/{namespace} [get]
+//	@Success		200
+//	@Failure		404
 func (handler *NamespaceHandler) Exists(c *gin.Context) {
 	namespace := c.Param("namespace")
 	ok, err := handler.s.ExistsNamespace(c, namespace)
@@ -59,10 +75,24 @@ func (handler *NamespaceHandler) Exists(c *gin.Context) {
 	helper.ResponseOK(c, nil)
 }
 
+type CreateNamespaceRequest struct {
+	Namespace string `json:"namespace" validate:"required"`
+}
+type CreateNamespaceResponse struct {
+	Namespace string `json:"namespace"`
+}
+
+//	@Summary		Create a namespace
+//	@Description	Create a namespace
+//	@Tags			namespace
+//	@Accept			json
+//	@Produce		json
+//	@Param			namespace	body		CreateNamespaceRequest	true	"Namespace"
+//	@Success		201			{object}	helper.Response{data=CreateNamespaceResponse}
+//	@Failure		400			{object}	helper.Error
+//	@Router			/namespaces [post]
 func (handler *NamespaceHandler) Create(c *gin.Context) {
-	var request struct {
-		Namespace string `json:"namespace" validate:"required"`
-	}
+	var request CreateNamespaceRequest
 	if err := c.BindJSON(&request); err != nil {
 		helper.ResponseBadRequest(c, err)
 		return
@@ -80,6 +110,12 @@ func (handler *NamespaceHandler) Create(c *gin.Context) {
 	helper.ResponseCreated(c, gin.H{"namespace": request.Namespace})
 }
 
+//	@Summary		Remove a namespace
+//	@Description	Remove a namespace
+//	@Tags			namespace
+//	@Param			namespace	path	string	true	"Namespace"
+//	@Router			/namespaces/{namespace} [delete]
+//	@Success		204
 func (handler *NamespaceHandler) Remove(c *gin.Context) {
 	namespace := c.Param("namespace")
 	if err := handler.s.RemoveNamespace(c, namespace); err != nil {

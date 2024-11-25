@@ -19,9 +19,17 @@
  */
 package server
 
+//	@title		Kvrocks Controller API
+//	@version	1.0
+//	@BasePath	/api/v1
+
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	_ "github.com/apache/kvrocks-controller/swag-docs"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/apache/kvrocks-controller/server/helper"
 
@@ -40,6 +48,7 @@ func (srv *Server) initHandlers() {
 
 	engine.Any("/debug/pprof/*profile", PProf)
 	engine.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	engine.GET("swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	engine.NoRoute(func(c *gin.Context) {
 		helper.ResponseError(c, consts.ErrNotFound)
 		c.Abort()

@@ -40,20 +40,55 @@ type SlotsRequest struct {
 }
 
 type CreateShardRequest struct {
-	Master *store.ClusterNode  `json:"master"`
-	Slaves []store.ClusterNode `json:"slaves"`
+	Nodes    []string `json:"nodes" validate:"required"`
+	Password string   `json:"password"`
 }
 
+type ListShardResponse struct {
+	Shards []store.Shard `json:"shards"`
+}
+
+type GetShardResponse struct {
+	Shard store.Shard `json:"shard"`
+}
+
+//	@Summary		List shards
+//	@Description	List all shards
+//	@Tags			shard
+//	@Param			namespace	path		string									true	"Namespace"
+//	@Param			cluster		path		string									true	"Cluster"
+//	@Success		200			{object}	helper.Response{data=ListShardResponse}	"分片列表"
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/shards [get]
 func (handler *ShardHandler) List(c *gin.Context) {
 	cluster, _ := c.MustGet(consts.ContextKeyCluster).(*store.Cluster)
 	helper.ResponseOK(c, gin.H{"shards": cluster.Shards})
 }
 
+//	@Summary		Get a shard
+//	@Description	Get a shard by providing shard index
+//	@Tags			shard
+//	@Param			namespace	path		string	true	"Namespace"
+//	@Param			cluster		path		string	true	"Cluster"
+//	@Param			shard		path		int		true	"Shard Index"
+//	@Success		200			{object}	helper.Response{data=GetShardResponse}
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/shards/{shard} [get]
 func (handler *ShardHandler) Get(c *gin.Context) {
 	shard, _ := c.MustGet(consts.ContextKeyClusterShard).(*store.Shard)
 	helper.ResponseOK(c, gin.H{"shard": shard})
 }
 
+//	@Summary		Create a shard
+//	@Description	Create a shard by providing nodes
+//	@Tags			shard
+//	@Accept			json
+//	@Produce		json
+//	@Param			namespace	path		string				true	"Namespace"
+//	@Param			cluster		path		string				true	"Cluster"
+//
+//	@Param			data		body		CreateShardRequest	true	"Create Shard Request"
+//	@Success		201			{object}	helper.Response{data=store.Shard}
+//	@Failure		400			{object}	helper.Error
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/shards [post]
 func (handler *ShardHandler) Create(c *gin.Context) {
 	ns := c.Param("namespace")
 	var req struct {
@@ -89,6 +124,17 @@ func (handler *ShardHandler) Create(c *gin.Context) {
 	helper.ResponseCreated(c, gin.H{"shard": newShard})
 }
 
+//	@Summary		Remove a shard
+//	@Description	Remove a shard by providing shard index
+//	@Tags			shard
+//	@Accept			json
+//	@Produce		json
+//	@Param			namespace	path	string	true	"Namespace"
+//	@Param			cluster		path	string	true	"Cluster"
+//	@Param			shard		path	int		true	"Shard Index"
+//	@Success		204			"No Content"
+//	@Failure		400			{object}	helper.Error
+//	@Router			/namespaces/{namespace}/clusters/{cluster}/shards/{shard} [delete]
 func (handler *ShardHandler) Remove(c *gin.Context) {
 	ns := c.Param("namespace")
 	shardIdx, err := strconv.Atoi(c.Param("shard"))
@@ -114,13 +160,28 @@ func (handler *ShardHandler) Remove(c *gin.Context) {
 	helper.ResponseNoContent(c)
 }
 
+type FailoverRequest struct {
+	PreferredNodeID string `json:"preferred_node_id"`
+}
+type FailoverResponse struct {
+	NewMasterNodeID string `json:"new_master_id"`
+}
+
+//	@Summary	Execute failover on a target shard
+//	@Param		namespace	path	string			true	"Namespace"
+//	@Param		cluster		path	string			true	"Cluster"
+//	@Param		shard		path	int				true	"Shard Index"
+//	@Param		data		body	FailoverRequest	true	"Failover Request"
+//	@Accept		json
+//	@Produce	json
+//	@Tags		shard
+//	@Success	200	{object}	helper.Response{data=FailoverResponse}
+//	@Router		/namespaces/{namespace}/clusters/{cluster}/shards/{shard}/failover [post]
 func (handler *ShardHandler) Failover(c *gin.Context) {
 	ns := c.Param("namespace")
 	cluster, _ := c.MustGet(consts.ContextKeyCluster).(*store.Cluster)
 
-	var req struct {
-		PreferredNodeID string `json:"preferred_node_id"`
-	}
+	req := FailoverRequest{}
 	if c.Request.Body != nil {
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {

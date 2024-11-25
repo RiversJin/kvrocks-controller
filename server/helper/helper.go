@@ -32,10 +32,13 @@ import (
 	"github.com/apache/kvrocks-controller/util"
 )
 
+// Error Message
 type Error struct {
 	Message string `json:"message"`
 }
 
+// Response General Response Structure
+// @Description General Response Structure
 type Response struct {
 	Error *Error      `json:"error,omitempty"`
 	Data  interface{} `json:"data"`
