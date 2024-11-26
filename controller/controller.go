@@ -182,6 +182,7 @@ func (c *Controller) buildClusterKey(namespace, clusterName string) string {
 func (c *Controller) addCluster(namespace, clusterName string) {
 	key := c.buildClusterKey(namespace, clusterName)
 	if cluster, err := c.getCluster(namespace, clusterName); err == nil && cluster != nil {
+		// if the cluster already exists, just return
 		return
 	}
 

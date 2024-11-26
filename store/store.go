@@ -211,6 +211,7 @@ func (s *ClusterStore) RemoveCluster(ctx context.Context, ns, cluster string) er
 	return nil
 }
 
+// Check whether the new nodes are already in the store
 func (s *ClusterStore) CheckNewNodes(ctx context.Context, nodes []string) error {
 	newNodes := make(map[string]bool, 0)
 	for _, node := range nodes {

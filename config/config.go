@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
+	"github.com/apache/kvrocks-controller/consts"
 	"github.com/apache/kvrocks-controller/logger"
 	"github.com/apache/kvrocks-controller/store/engine/etcd"
 	"github.com/apache/kvrocks-controller/store/engine/zookeeper"
@@ -50,6 +51,7 @@ const defaultPort = 9379
 
 type Config struct {
 	Addr        string            `yaml:"addr"`
+	IDC         string            `yaml:"idc"`
 	StorageType string            `yaml:"storage_type"`
 	Etcd        *etcd.Config      `yaml:"etcd"`
 	Zookeeper   *zookeeper.Config `yaml:"zookeeper"`
@@ -74,6 +76,7 @@ func Default() *Config {
 		},
 	}
 	c.Addr = c.getAddr()
+	c.IDC = c.getIDC()
 	return c
 }
 
@@ -91,12 +94,25 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c *Config) getIDC() string {
+	// env has higher priority than configuration.
+	// case: get idc from env
+	idc := os.Getenv(consts.ENV_IDC_ID)
+	if idc != "" {
+		return idc
+	}
+	if c.IDC != "" {
+		return c.IDC
+	}
+	return "default-idc"
+}
+
 func (c *Config) getAddr() string {
 	// env has higher priority than configuration.
 	// case: get addr from env
 	checker := validator.New()
-	host := os.Getenv("KVROCKS_CONTROLLER_HTTP_HOST")
-	port := os.Getenv("KVROCKS_CONTROLLER_HTTP_PORT")
+	host := os.Getenv(consts.ENV_HTTP_HOST)
+	port := os.Getenv(consts.ENV_HTTP_PORT)
 	addr := host + ":" + port
 	err := checker.Var(addr, "required,tcp_addr")
 	if err == nil {

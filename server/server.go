@@ -53,7 +53,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	var persist engine.Engine
 	var err error
 
-	sessionID := helper.GenerateSessionID(cfg.Addr)
+	sessionID := helper.GenerateControllerID(cfg.Addr, cfg.IDC)
 	switch {
 	case strings.EqualFold(cfg.StorageType, "etcd"):
 		logger.Get().Info("Use Etcd as store")

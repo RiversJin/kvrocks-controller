@@ -20,6 +20,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.4
 	go.uber.org/atomic v1.7.0
 	go.uber.org/zap v1.21.0
+	golang.org/x/sync v0.1.0
 	gopkg.in/yaml.v1 v1.0.0-20140924161607-9f9df34309c0
 )
 

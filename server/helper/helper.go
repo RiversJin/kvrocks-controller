@@ -94,6 +94,19 @@ func GenerateSessionID(addr string) string {
 	return fmt.Sprintf("%s/%s", util.RandString(8), addr)
 }
 
+func GenerateControllerID(addr, idc string) string {
+	// by this we can list all the controllers by the idc first
+	return fmt.Sprintf("%s/%s/%s", idc, util.RandString(8), addr)
+}
+
+func ParseControllerID(controllerID string) (addr, idc, random string, err error) {
+	parts := strings.Split(controllerID, "/")
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid controller ID: %s, %w", controllerID, consts.ErrInvalidArgument)
+	}
+	return parts[2], parts[0], parts[1], nil
+}
+
 // extractAddrFromSessionID decodes the session ID to the addr.
 func ExtractAddrFromSessionID(sessionID string) string {
 	parts := strings.Split(sessionID, "/")
