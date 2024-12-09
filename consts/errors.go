@@ -37,4 +37,6 @@ var (
 	ErrShardIsServicing        = errors.New("shard is servicing")
 	ErrShardSlotIsMigrating    = errors.New("shard slot is migrating")
 	ErrShardNoMatchNewMaster   = errors.New("no match new master in shard")
+	ErrControllerNotEnough     = errors.New("controller not enough")
+	ErrNoMaster                = errors.New("no master")
 )

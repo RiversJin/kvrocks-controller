@@ -161,7 +161,7 @@ func (shard *Shard) getNewMasterNodeIndex(ctx context.Context, masterNodeIndex i
 // The masterNodeID is used to check if the node is the current master node if it's not empty.
 // The preferredNodeID is used to specify the preferred node to be promoted as the new master node,
 // it will choose the node with the highest sequence number if the preferredNodeID is empty.
-func (shard *Shard) promoteNewMaster(ctx context.Context, masterNodeID, preferredNodeID string) (string, error) {
+func (shard *Shard) PromoteNewMaster(ctx context.Context, masterNodeID, preferredNodeID string) (string, error) {
 	if len(shard.Nodes) <= 1 {
 		return "", consts.ErrShardNoReplica
 	}

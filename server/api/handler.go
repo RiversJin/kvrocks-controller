@@ -20,20 +20,30 @@
 
 package api
 
-import "github.com/apache/kvrocks-controller/store"
+import (
+	"github.com/apache/kvrocks-controller/controller"
+	"github.com/apache/kvrocks-controller/store"
+)
 
 type Handler struct {
 	Namespace *NamespaceHandler
 	Cluster   *ClusterHandler
 	Shard     *ShardHandler
 	Node      *NodeHandler
+
+	Controller *controller.Controller
 }
 
-func NewHandler(s *store.ClusterStore) *Handler {
+func NewHandler(s *store.ClusterStore, c *controller.Controller) *Handler {
 	return &Handler{
 		Namespace: &NamespaceHandler{s: s},
-		Cluster:   &ClusterHandler{s: s},
-		Shard:     &ShardHandler{s: s},
-		Node:      &NodeHandler{s: s},
+		Cluster: &ClusterHandler{
+			s: s,
+			c: c,
+		},
+		Shard: &ShardHandler{s: s},
+		Node:  &NodeHandler{s: s},
+
+		Controller: c,
 	}
 }

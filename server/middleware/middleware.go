@@ -23,13 +23,16 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 
 	"github.com/apache/kvrocks-controller/consts"
+	"github.com/apache/kvrocks-controller/logger"
 	"github.com/apache/kvrocks-controller/metrics"
 	"github.com/apache/kvrocks-controller/server/helper"
 	"github.com/apache/kvrocks-controller/store"
@@ -59,26 +62,41 @@ func CollectMetrics(c *gin.Context) {
 	}
 }
 
-func RedirectIfNotLeader(c *gin.Context) {
-	storage, _ := c.MustGet(consts.ContextKeyStore).(*store.ClusterStore)
-	if storage.Leader() == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no leader now, please retry later"})
-		c.Abort()
-		return
-	}
-	if !storage.IsLeader() {
-		if !c.GetBool(consts.HeaderIsRedirect) {
-			c.Set(consts.HeaderIsRedirect, true)
-			peerAddr := helper.ExtractAddrFromSessionID(storage.Leader())
-			c.Redirect(http.StatusTemporaryRedirect, "http://"+peerAddr+c.Request.RequestURI)
-			c.Redirect(http.StatusTemporaryRedirect, "http://"+storage.Leader()+c.Request.RequestURI)
-		} else {
+func RedirectIfNotLeader(whiteList []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		for _, pattern := range whiteList {
+			matched, err := path.Match(pattern, c.FullPath())
+			if err != nil {
+				logger.Get().Error("failed to match path", zap.String("path", c.FullPath()), zap.Error(err))
+				continue
+			}
+			if matched {
+				c.Next()
+				return
+			}
+		}
+
+		storage, _ := c.MustGet(consts.ContextKeyStore).(*store.ClusterStore)
+		if storage.Leader() == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "no leader now, please retry later"})
 			c.Abort()
+			return
 		}
-		return
+		if !storage.IsLeader() {
+			if !c.GetBool(consts.HeaderIsRedirect) {
+				c.Set(consts.HeaderIsRedirect, true)
+				peerAddr := helper.ExtractAddrFromSessionID(storage.Leader())
+				c.Redirect(http.StatusTemporaryRedirect, "http://"+peerAddr+c.Request.RequestURI)
+				c.Redirect(http.StatusTemporaryRedirect, "http://"+storage.Leader()+c.Request.RequestURI)
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "no leader now, please retry later"})
+				c.Abort()
+			}
+			return
+		}
+		c.Next()
+
 	}
-	c.Next()
 }
 
 func RequiredNamespace(c *gin.Context) {

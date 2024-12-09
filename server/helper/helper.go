@@ -21,14 +21,18 @@
 package helper
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/apache/kvrocks-controller/consts"
+	"github.com/apache/kvrocks-controller/probe"
 	"github.com/apache/kvrocks-controller/util"
 )
 
@@ -42,6 +46,25 @@ type Error struct {
 type Response struct {
 	Error *Error      `json:"error,omitempty"`
 	Data  interface{} `json:"data"`
+}
+
+func ResponseUnmarshal[T any](r io.Reader) (*T, error) {
+	// todo: replace the original `Response` struct with the new one
+	type dummyResponse struct {
+		Error *Error `json:"error,omitempty"`
+		Data  T      `json:"data"`
+	}
+
+	var resp dummyResponse
+	if err := json.NewDecoder(r).Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	if resp.Error != nil {
+		return nil, errors.New(resp.Error.Message)
+	}
+
+	return &resp.Data, nil
 }
 
 func ResponseOK(c *gin.Context, data interface{}) {
@@ -94,19 +117,6 @@ func GenerateSessionID(addr string) string {
 	return fmt.Sprintf("%s/%s", util.RandString(8), addr)
 }
 
-func GenerateControllerID(addr, idc string) string {
-	// by this we can list all the controllers by the idc first
-	return fmt.Sprintf("%s/%s/%s", idc, util.RandString(8), addr)
-}
-
-func ParseControllerID(controllerID string) (addr, idc, random string, err error) {
-	parts := strings.Split(controllerID, "/")
-	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("invalid controller ID: %s, %w", controllerID, consts.ErrInvalidArgument)
-	}
-	return parts[2], parts[0], parts[1], nil
-}
-
 // extractAddrFromSessionID decodes the session ID to the addr.
 func ExtractAddrFromSessionID(sessionID string) string {
 	parts := strings.Split(sessionID, "/")
@@ -115,4 +125,32 @@ func ExtractAddrFromSessionID(sessionID string) string {
 		return sessionID
 	}
 	return parts[1]
+}
+
+func HealthQueryUrl(addr, namespace, cluster, node string) string {
+	return fmt.Sprintf("http://%s/api/v1/namespaces/%s/clusters/%s/nodes/%s/health", addr, namespace, cluster, node)
+}
+
+func QueryHealthStatus(ctx context.Context, addr, namespace, cluster, node string) (*probe.ProbeStatus, error) {
+	url := HealthQueryUrl(addr, namespace, cluster, node)
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http status code: %d", resp.StatusCode)
+	}
+
+	return ResponseUnmarshal[probe.ProbeStatus](resp.Body)
 }

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/apache/kvrocks-controller/common"
 	"github.com/apache/kvrocks-controller/consts"
 	"github.com/apache/kvrocks-controller/store/engine"
 )
@@ -44,6 +45,7 @@ type Store interface {
 	SetCluster(ctx context.Context, ns string, clusterInfo *Cluster) error
 
 	CheckNewNodes(ctx context.Context, nodes []string) error
+	ListController() []common.ControllerID
 }
 
 var _ Store = (*ClusterStore)(nil)
@@ -61,6 +63,10 @@ func NewClusterStore(e engine.Engine) *ClusterStore {
 		eventNotifyCh: make(chan EventPayload, 100),
 		quitCh:        make(chan struct{}),
 	}
+}
+
+func (s *ClusterStore) ListController() []common.ControllerID {
+	return s.e.ListController()
 }
 
 func (s *ClusterStore) IsReady(ctx context.Context) bool {

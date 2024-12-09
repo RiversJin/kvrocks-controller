@@ -26,9 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/kvrocks-controller/common"
 	"github.com/apache/kvrocks-controller/consts"
-	"github.com/apache/kvrocks-controller/server/helper"
-	"github.com/apache/kvrocks-controller/util"
 	"golang.org/x/sync/errgroup"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -45,9 +44,6 @@ const (
 	sessionTTL         = 6
 	defaultDailTimeout = 5 * time.Second
 )
-
-const defaultElectPath = "/kvrocks/controller/leader"
-const controllerPath = "/kvrocks/controllers/"
 
 type Config struct {
 	Addrs    []string `yaml:"addrs"`
@@ -68,13 +64,14 @@ type Etcd struct {
 
 	leaderMu  sync.RWMutex
 	leaderID  string
-	myID      string
+	myID      common.ControllerID
 	electPath string
 	isReady   atomic.Bool
 
-	// idc -> controller list
-	// mutex<set<idc, set<controller>>>
-	controllerList util.RWLock[map[string]map[string]struct{}]
+	controllerListMu sync.RWMutex
+	// protected by controllerListMu
+	// set<controller>
+	controllerList map[common.ControllerID]struct{}
 
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -83,11 +80,7 @@ type Etcd struct {
 	leaderChangeCh chan bool
 }
 
-func New(id string, cfg *Config) (*Etcd, error) {
-	if len(id) == 0 {
-		return nil, errors.New("id must NOT be a empty string")
-	}
-
+func New(id common.ControllerID, cfg *Config) (*Etcd, error) {
 	clientConfig := clientv3.Config{
 		Endpoints:   cfg.Addrs,
 		DialTimeout: defaultDailTimeout,
@@ -117,7 +110,7 @@ func New(id string, cfg *Config) (*Etcd, error) {
 		return nil, err
 	}
 
-	electPath := defaultElectPath
+	electPath := consts.ElectPath
 	if cfg.ElectPath != "" {
 		electPath = cfg.ElectPath
 	}
@@ -131,31 +124,44 @@ func New(id string, cfg *Config) (*Etcd, error) {
 	}
 	e.isReady.Store(false)
 
-	e.ctx, e.cancel = context.WithCancel(context.Background())
-	e.eg, e.ctx = errgroup.WithContext(e.ctx)
+	var ctx context.Context
+	ctx, e.cancel = context.WithCancel(context.Background())
+	e.eg, e.ctx = errgroup.WithContext(ctx)
 
 	e.eg.Go(func() error {
-		return e.observeController(e.ctx)
+		return e.observeController()
 	})
 	e.eg.Go(func() error {
-		return e.electLoop(e.ctx)
+		return e.electLoop()
 	})
 	e.eg.Go(func() error {
-		e.observeLeaderEvent(e.ctx)
+		e.observeLeaderEvent()
 		return nil
 	})
 	e.eg.Go(func() error {
-		return e.heartbeatLoop(e.ctx)
+		return e.heartbeatLoop()
 	})
 	return e, nil
 }
 
-func (e *Etcd) ListController() map[string]map[string]struct{} {
-	return e.controllerList.Get()
+func (e *Etcd) ListController() []common.ControllerID {
+	list := []common.ControllerID{}
+
+	e.controllerListMu.RLock()
+	defer e.controllerListMu.RUnlock()
+
+	for controller := range e.controllerList {
+		if e.myID.Addr == controller.Addr {
+			continue
+		}
+		list = append(list, controller)
+	}
+
+	return list
 }
 
 func (e *Etcd) ID() string {
-	return e.myID
+	return e.myID.String()
 }
 
 func (e *Etcd) Leader() string {
@@ -171,7 +177,7 @@ func (e *Etcd) LeaderChange() <-chan bool {
 func (e *Etcd) IsReady(ctx context.Context) bool {
 	for {
 		select {
-		case <-e.ctx.Done():
+		case <-ctx.Done():
 			return false
 		case <-time.After(100 * time.Millisecond):
 			if e.isReady.Load() {
@@ -239,10 +245,10 @@ func (e *Etcd) List(ctx context.Context, prefix string) ([]engine.Entry, error) 
 	return entries, nil
 }
 
-func (e *Etcd) heartbeatLoop(ctx context.Context) error {
-	key := controllerPath + e.myID
+func (e *Etcd) heartbeatLoop() error {
+	key := consts.ControllerPath + e.myID.String()
 
-	leaseResp, err := e.client.Grant(ctx, sessionTTL)
+	leaseResp, err := e.client.Grant(e.ctx, sessionTTL)
 	if err != nil {
 		logger.Get().With(
 			zap.Error(err),
@@ -252,7 +258,7 @@ func (e *Etcd) heartbeatLoop(ctx context.Context) error {
 
 	leaseID := leaseResp.ID
 
-	_, err = e.client.Put(ctx, key, "", clientv3.WithLease(leaseID))
+	_, err = e.client.Put(e.ctx, key, "", clientv3.WithLease(leaseID))
 	if err != nil {
 		logger.Get().With(
 			zap.Error(err),
@@ -260,7 +266,7 @@ func (e *Etcd) heartbeatLoop(ctx context.Context) error {
 		return err
 	}
 
-	keepAliveCh, err := e.client.KeepAlive(ctx, leaseID)
+	keepAliveCh, err := e.client.KeepAlive(e.ctx, leaseID)
 	if err != nil {
 		logger.Get().With(
 			zap.Error(err),
@@ -271,7 +277,7 @@ func (e *Etcd) heartbeatLoop(ctx context.Context) error {
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-e.ctx.Done():
 				return
 			case kaResp, ok := <-keepAliveCh:
 				if !ok {
@@ -284,7 +290,7 @@ func (e *Etcd) heartbeatLoop(ctx context.Context) error {
 		}
 	}()
 
-	<-ctx.Done()
+	<-e.ctx.Done()
 
 	// ctx is canceled, use a new context to revoke the lease
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -300,37 +306,28 @@ func (e *Etcd) heartbeatLoop(ctx context.Context) error {
 	return nil
 }
 
-func (e *Etcd) observeController(ctx context.Context) error {
-	handleChange := func(inserts, deletes map[string]map[string]struct{}) {
-		e.controllerList.Update(func(old map[string]map[string]struct{}) map[string]map[string]struct{} {
+func (e *Etcd) observeController() error {
+	handleChange := func(inserts, deletes map[common.ControllerID]struct{}) {
+		e.controllerListMu.Lock()
+		defer e.controllerListMu.Unlock()
 
-			for idc, controllers := range inserts {
-				if _, ok := old[idc]; !ok {
-					old[idc] = controllers
-				} else {
-					for addr := range controllers {
-						old[idc][addr] = struct{}{}
-					}
-				}
+		for id := range inserts {
+			if _, ok := e.controllerList[id]; !ok {
+				e.controllerList[id] = struct{}{}
 			}
+		}
 
-			for idc, controllers := range deletes {
-				if _, ok := old[idc]; !ok {
-					continue
-				}
-
-				for addr := range controllers {
-					delete(old[idc], addr)
-				}
+		for id := range deletes {
+			if _, ok := e.controllerList[id]; ok {
+				delete(e.controllerList, id)
 			}
-			return old
-		})
+		}
 	}
 
-	rch := e.client.Watch(ctx, controllerPath, clientv3.WithPrefix())
+	rch := e.client.Watch(e.ctx, consts.ControllerPath, clientv3.WithPrefix())
 
 	// after watch is created, get the current controller list
-	resp, err := e.client.Get(ctx, controllerPath, clientv3.WithPrefix())
+	resp, err := e.client.Get(e.ctx, consts.ControllerPath, clientv3.WithPrefix())
 	if err != nil {
 		logger.Get().With(
 			zap.Error(err),
@@ -338,11 +335,12 @@ func (e *Etcd) observeController(ctx context.Context) error {
 		return err
 	}
 
-	controllerList := make(map[string]map[string]struct{})
+	controllerList := make(map[common.ControllerID]struct{})
 	for _, kv := range resp.Kvs {
-		id := string(kv.Key[len(controllerPath):])
+		rawid := string(kv.Key[len(consts.ControllerPath):])
 
-		addr, idc, _, err := helper.ParseControllerID(id)
+		id, err := common.ParseControllerID(rawid)
+
 		if err != nil {
 			logger.Get().With(
 				zap.Error(err),
@@ -350,18 +348,16 @@ func (e *Etcd) observeController(ctx context.Context) error {
 			continue
 		}
 
-		if _, ok := controllerList[idc]; !ok {
-			controllerList[idc] = map[string]struct{}{}
-		}
-
-		controllerList[idc][addr] = struct{}{}
+		controllerList[id] = struct{}{}
 	}
 
-	e.controllerList.Set(controllerList)
+	e.controllerListMu.Lock()
+	e.controllerList = controllerList
+	e.controllerListMu.Unlock()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-e.ctx.Done():
 			return nil
 		case wresp := <-rch:
 			if wresp.Err() != nil {
@@ -371,13 +367,13 @@ func (e *Etcd) observeController(ctx context.Context) error {
 				return wresp.Err()
 			}
 
-			inserts := make(map[string]map[string]struct{})
-			deletes := make(map[string]map[string]struct{})
+			inserts := map[common.ControllerID]struct{}{}
+			deletes := map[common.ControllerID]struct{}{}
 
 			for _, ev := range wresp.Events {
-				id := string(ev.Kv.Key[len(controllerPath):])
+				rawid := string(ev.Kv.Key[len(consts.ControllerPath):])
+				id, err := common.ParseControllerID(rawid)
 
-				addr, idc, _, err := helper.ParseControllerID(id)
 				if err != nil {
 					logger.Get().With(
 						zap.Error(err),
@@ -387,15 +383,9 @@ func (e *Etcd) observeController(ctx context.Context) error {
 
 				switch ev.Type {
 				case clientv3.EventTypePut:
-					if _, ok := inserts[idc]; !ok {
-						inserts[idc] = map[string]struct{}{}
-					}
-					inserts[idc][addr] = struct{}{}
+					inserts[id] = struct{}{}
 				case clientv3.EventTypeDelete:
-					if _, ok := deletes[idc]; !ok {
-						deletes[idc] = map[string]struct{}{}
-					}
-					deletes[idc][addr] = struct{}{}
+					deletes[id] = struct{}{}
 				}
 			}
 			handleChange(inserts, deletes)
@@ -404,10 +394,10 @@ func (e *Etcd) observeController(ctx context.Context) error {
 
 }
 
-func (e *Etcd) electLoop(ctx context.Context) error {
+func (e *Etcd) electLoop() error {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-e.ctx.Done():
 			return nil
 		default:
 		}
@@ -417,7 +407,8 @@ func (e *Etcd) electLoop(ctx context.Context) error {
 			logger.Get().With(
 				zap.Error(err),
 			).Error("Failed to create session")
-			return err
+			time.Sleep(sessionTTL / 3)
+			continue
 		}
 
 		election := concurrency.NewElection(session, e.electPath)
@@ -425,10 +416,10 @@ func (e *Etcd) electLoop(ctx context.Context) error {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-e.ctx.Done():
 				return nil
 			case <-time.After(time.Second):
-				if err := election.Campaign(ctx, e.myID); err != nil {
+				if err := election.Campaign(e.ctx, e.myID.String()); err != nil {
 					logger.Get().With(
 						zap.Error(err),
 					).Error("Failed to campaign")
@@ -439,7 +430,7 @@ func (e *Etcd) electLoop(ctx context.Context) error {
 	}
 }
 
-func (e *Etcd) observeLeaderEvent(ctx context.Context) {
+func (e *Etcd) observeLeaderEvent() {
 	var election *concurrency.Election
 	select {
 	case elect := <-e.electionCh:
@@ -448,7 +439,7 @@ func (e *Etcd) observeLeaderEvent(ctx context.Context) {
 		return
 	}
 
-	ch := election.Observe(ctx)
+	ch := election.Observe(e.ctx)
 	for {
 		select {
 		case resp := <-ch:
@@ -463,12 +454,12 @@ func (e *Etcd) observeLeaderEvent(ctx context.Context) {
 					continue
 				}
 			} else {
-				ch = election.Observe(ctx)
+				ch = election.Observe(e.ctx)
 				e.leaderChangeCh <- false
 			}
 		case elect := <-e.electionCh:
 			election = elect
-			ch = election.Observe(ctx)
+			ch = election.Observe(e.ctx)
 		case <-e.ctx.Done():
 			logger.Get().Info("Exit the leader change observe loop")
 			return

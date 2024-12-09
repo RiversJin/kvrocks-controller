@@ -31,10 +31,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/apache/kvrocks-controller/common"
 	"github.com/apache/kvrocks-controller/config"
 	"github.com/apache/kvrocks-controller/controller"
 	"github.com/apache/kvrocks-controller/logger"
-	"github.com/apache/kvrocks-controller/server/helper"
 	"github.com/apache/kvrocks-controller/store"
 	"github.com/apache/kvrocks-controller/store/engine"
 	"github.com/apache/kvrocks-controller/store/engine/etcd"
@@ -53,7 +53,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	var persist engine.Engine
 	var err error
 
-	sessionID := helper.GenerateControllerID(cfg.Addr, cfg.IDC)
+	sessionID := common.NewControllerID(cfg.Addr, cfg.IDC)
 	switch {
 	case strings.EqualFold(cfg.StorageType, "etcd"):
 		logger.Get().Info("Use Etcd as store")

@@ -41,6 +41,7 @@ type AdminConfig struct {
 type FailOverConfig struct {
 	PingIntervalSeconds int   `yaml:"ping_interval_seconds"`
 	MaxPingCount        int64 `yaml:"max_ping_count"`
+	Quorum              int   `yaml:"quorum"`
 }
 
 type ControllerConfig struct {

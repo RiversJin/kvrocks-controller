@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/kvrocks-controller/common"
 	"github.com/apache/kvrocks-controller/util"
 
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ import (
 const addr = "127.0.0.1:2181"
 
 func TestBasicOperations(t *testing.T) {
-	id := util.RandString(40)
+	id := common.NewControllerID(addr, "defaultIDC")
 	testElectPath := "/" + util.RandString(8) + "/" + util.RandString(8)
 	persist, err := New(id, &Config{
 		ElectPath: testElectPath,
@@ -67,24 +68,24 @@ func TestElect(t *testing.T) {
 	endpoints := []string{addr}
 
 	testElectPath := "/" + util.RandString(8) + "/" + util.RandString(8)
-	id0 := util.RandString(40)
+	id0 := common.NewControllerID(addr, "defaultIDC")
 	node0, err := New(id0, &Config{
 		ElectPath: testElectPath,
 		Addrs:     endpoints,
 	})
 	require.NoError(t, err)
 	require.Eventuallyf(t, func() bool {
-		return node0.Leader() == node0.myID
+		return node0.Leader() == node0.myID.String()
 	}, 10*time.Second, 100*time.Millisecond, "node0 should be the leader")
 
-	id1 := util.RandString(40)
+	id1 := common.NewControllerID(addr, "defaultIDC1")
 	node1, err := New(id1, &Config{
 		ElectPath: testElectPath,
 		Addrs:     endpoints,
 	})
 	require.NoError(t, err)
 	require.Eventuallyf(t, func() bool {
-		return node1.Leader() == node0.myID
+		return node1.Leader() == node0.myID.String()
 	}, 10*time.Second, 100*time.Millisecond, "node1's leader should be the node0")
 
 	go func() {
@@ -101,7 +102,7 @@ func TestElect(t *testing.T) {
 	require.NoError(t, node0.Close())
 
 	require.Eventuallyf(t, func() bool {
-		return node1.Leader() == node1.myID
+		return node1.Leader() == node1.myID.String()
 	}, 15*time.Second, 100*time.Millisecond, "node1 should be the leader")
 	require.NoError(t, node1.Close())
 }

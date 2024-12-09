@@ -26,17 +26,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/kvrocks-controller/common"
+	"github.com/apache/kvrocks-controller/consts"
 	"github.com/apache/kvrocks-controller/logger"
 	"github.com/apache/kvrocks-controller/store/engine"
 	"github.com/go-zookeeper/zk"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	sessionTTL = 6 * time.Second
 )
-
-const defaultElectPath = "/kvrocks/controller/leader"
 
 type Config struct {
 	Addrs     []string `yaml:"addrs"`
@@ -46,27 +48,46 @@ type Config struct {
 }
 
 type Zookeeper struct {
-	conn           *zk.Conn
-	acl            []zk.ACL // We will set this ACL for the node we have created
-	leaderMu       sync.RWMutex
-	leaderID       string
-	myID           string
-	electPath      string
-	isReady        atomic.Bool
-	quitCh         chan struct{}
+	conn      *zk.Conn
+	acl       []zk.ACL // We will set this ACL for the node we have created
+	leaderMu  sync.RWMutex
+	leaderID  string
+	myID      common.ControllerID
+	electPath string
+	isReady   atomic.Bool
+
+	controllerListMu sync.RWMutex
+	// protected by controllerListMu
+	// set<controller>
+	controllerList map[common.ControllerID]struct{}
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	eg     *errgroup.Group
+
 	leaderChangeCh chan bool
-	wg             sync.WaitGroup
 }
 
-func New(id string, cfg *Config) (*Zookeeper, error) {
-	if len(id) == 0 {
-		return nil, errors.New("id must NOT be a empty string")
+func (e *Zookeeper) ListController() []common.ControllerID {
+	e.controllerListMu.RLock()
+	defer e.controllerListMu.RUnlock()
+
+	controllers := make([]common.ControllerID, len(e.controllerList))
+	for controller := range e.controllerList {
+		if controller.Addr == e.myID.Addr {
+			continue
+		}
+		controllers = append(controllers, controller)
 	}
+	return controllers
+}
+
+func New(id common.ControllerID, cfg *Config) (*Zookeeper, error) {
 	conn, _, err := zk.Connect(cfg.Addrs, sessionTTL)
 	if err != nil {
 		return nil, err
 	}
-	electPath := defaultElectPath
+	electPath := consts.ElectPath
 	if cfg.ElectPath != "" {
 		electPath = cfg.ElectPath
 	}
@@ -84,18 +105,35 @@ func New(id string, cfg *Config) (*Zookeeper, error) {
 		acl:            acl,
 		electPath:      electPath,
 		conn:           conn,
-		quitCh:         make(chan struct{}),
 		leaderChangeCh: make(chan bool),
-		wg:             sync.WaitGroup{},
 	}
+
 	e.isReady.Store(false)
-	e.wg.Add(1)
-	go e.electLoop(context.Background())
+
+	var ctx context.Context
+	ctx, e.cancel = context.WithCancel(context.Background())
+	e.eg, e.ctx = errgroup.WithContext(ctx)
+
+	e.eg.Go(func() error {
+		e.electLoop()
+		return nil
+	})
+
+	e.eg.Go(func() error {
+		e.observeControllers()
+		return nil
+	})
+
+	e.eg.Go(func() error {
+		e.heartbeatLoop()
+		return nil
+	})
+
 	return e, nil
 }
 
 func (e *Zookeeper) ID() string {
-	return e.myID
+	return e.myID.String()
 }
 
 func (e *Zookeeper) Leader() string {
@@ -111,7 +149,7 @@ func (e *Zookeeper) LeaderChange() <-chan bool {
 func (e *Zookeeper) IsReady(ctx context.Context) bool {
 	for {
 		select {
-		case <-e.quitCh:
+		case <-ctx.Done():
 			return false
 		case <-time.After(100 * time.Millisecond):
 			if e.isReady.Load() {
@@ -218,54 +256,126 @@ func (e *Zookeeper) SetleaderID(newLeaderID string) {
 	}
 }
 
-func (e *Zookeeper) electLoop(ctx context.Context) {
-	defer e.wg.Done()
-reset:
-	select {
-	case <-e.quitCh:
-		return
-	default:
-	}
-	err := e.Create(ctx, e.electPath, []byte(e.myID), zk.FlagEphemeral)
-	if err != nil && !errors.Is(err, zk.ErrNodeExists) {
-		time.Sleep(sessionTTL / 3)
-		goto reset
-	}
-	data, _, ch, err := e.conn.GetW(e.electPath)
+func (e *Zookeeper) heartbeatLoop() error {
+	key := consts.ControllerPath + e.myID.String()
+	_, err := e.conn.Create(key, []byte{}, zk.FlagEphemeral, e.acl)
 	if err != nil {
-		time.Sleep(sessionTTL / 3)
-		goto reset
+		logger.Get().Fatal("Create controller node fail: " + err.Error())
+		return err
 	}
-	e.SetleaderID(string(data))
+
+	go func() {
+		for {
+			<-e.ctx.Done()
+			logger.Get().Info("Exit the heartbeat loop")
+			return
+		}
+	}()
+
+	<-e.ctx.Done()
+	logger.Get().Info("Exit the heartbeat loop, ephemeral node %s will be deleted", zap.String("key", key))
+	return nil
+}
+
+func (e *Zookeeper) observeControllers() error {
+	controllersZK, _, events, err := e.conn.ChildrenW(consts.ControllerPath)
+	if err != nil {
+		logger.Get().Fatal("Observe controllers fail: " + err.Error())
+		return err
+	}
+
+	controllers := map[common.ControllerID]struct{}{}
+	for _, idraw := range controllersZK {
+		id, err := common.ParseControllerID(idraw)
+		if err != nil {
+			logger.Get().With(zap.Error(err)).Error("Parse controller ID fail")
+			continue
+		}
+
+		controllers[id] = struct{}{}
+	}
+
+	e.controllerListMu.Lock()
+	e.controllerList = controllers
+	e.controllerListMu.Unlock()
 
 	for {
 		select {
-		case resp := <-ch:
-			if resp.Type == zk.EventNodeDeleted {
-				err := e.Create(ctx, e.electPath, []byte(e.myID), zk.FlagEphemeral)
-				if err != nil && !errors.Is(err, zk.ErrNodeExists) {
-					time.Sleep(sessionTTL / 3)
-					goto reset
-				}
+		case <-e.ctx.Done():
+			logger.Get().Info("Exit the observe controllers loop")
+			return nil
+		case event := <-events:
+			if event.Err != nil {
+				logger.Get().With(
+					zap.Error(event.Err),
+				).Error("Watch error")
+				return event.Err
 			}
-			data, _, ch, err = e.conn.GetW(e.electPath)
-			if err != nil {
-				time.Sleep(sessionTTL / 3)
-				goto reset
-			}
-			e.SetleaderID(string(data))
-		case <-e.quitCh:
-			logger.Get().Info(e.myID + " Exit the leader election loop")
-			return
-		}
 
+			id, err := common.ParseControllerID(event.Path)
+			if err != nil {
+				logger.Get().With(zap.Error(err)).Error("Parse controller ID fail")
+				continue
+			}
+
+			switch event.Type {
+			case zk.EventNodeCreated:
+				e.controllerListMu.Lock()
+				e.controllerList[id] = struct{}{}
+				e.controllerListMu.Unlock()
+
+			case zk.EventNodeDeleted:
+				if _, ok := controllers[id]; ok {
+					e.controllerListMu.Lock()
+					delete(e.controllerList, id)
+					e.controllerListMu.Unlock()
+				}
+			default:
+				logger.Get().Info("Received Event Type = %v", zap.Any("event", event))
+			}
+
+		}
 	}
 
 }
 
+func (e *Zookeeper) electLoop() error {
+	createNode := func() (cur []byte, ch <-chan zk.Event, err error) {
+		err = e.Create(e.ctx, e.electPath, []byte(e.myID.String()), zk.FlagEphemeral)
+		if err != nil && !errors.Is(err, zk.ErrNodeExists) {
+			return
+		}
+		cur, _, ch, err = e.conn.GetW(e.electPath)
+		return
+	}
+
+	for {
+		cur, ch, err := createNode()
+		if err != nil {
+			logger.Get().Error("Create node fail: " + err.Error())
+			time.Sleep(sessionTTL / 3)
+			continue
+		}
+		e.SetleaderID(string(cur))
+
+	inner:
+		for {
+			select {
+			case resp := <-ch:
+				if resp.Type == zk.EventNodeDeleted {
+					break inner
+				}
+			case <-e.ctx.Done():
+				logger.Get().Info("Exit the leader election loop")
+				return nil
+			}
+		}
+	}
+}
+
 func (e *Zookeeper) Close() error {
-	close(e.quitCh)
-	e.wg.Wait()
+	e.cancel()
+	e.eg.Wait()
 	e.conn.Close()
 	return nil
 }

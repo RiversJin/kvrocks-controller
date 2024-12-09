@@ -59,20 +59,20 @@ func TestController_Basics(t *testing.T) {
 	c.WaitForReady()
 
 	t.Run("get cluster", func(t *testing.T) {
-		cluster, err := c.getCluster(ns, "test-cluster-0")
+		cluster, err := c.GetCluster(ns, "test-cluster-0")
 		require.NoError(t, err)
 		require.NotNil(t, cluster)
-		cluster, err = c.getCluster(ns, "test-cluster-1")
+		cluster, err = c.GetCluster(ns, "test-cluster-1")
 		require.NoError(t, err)
 		require.NotNil(t, cluster)
-		_, err = c.getCluster(ns, "test-cluster-2")
+		_, err = c.GetCluster(ns, "test-cluster-2")
 		require.ErrorIs(t, err, consts.ErrNotFound)
 		require.NotNil(t, cluster)
 	})
 
 	t.Run("remove cluster", func(t *testing.T) {
 		c.removeCluster(ns, "test-cluster-1")
-		_, err = c.getCluster(ns, "test-cluster-1")
+		_, err = c.GetCluster(ns, "test-cluster-1")
 		require.ErrorIs(t, err, consts.ErrNotFound)
 	})
 }

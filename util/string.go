@@ -65,3 +65,12 @@ func IsUniqueSlice(list interface{}) bool {
 
 	panic("only support string and int")
 }
+
+func ContainsAny(target string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(target, sub) {
+			return true
+		}
+	}
+	return false
+}

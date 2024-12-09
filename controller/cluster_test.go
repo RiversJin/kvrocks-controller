@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 
 	"github.com/apache/kvrocks-controller/consts"
+	"github.com/apache/kvrocks-controller/probe"
 	"github.com/apache/kvrocks-controller/store"
 	"github.com/apache/kvrocks-controller/store/engine"
 )
@@ -84,73 +84,6 @@ func (s *MockClusterStore) RemoveCluster(ctx context.Context, ns, cluster string
 	return nil
 }
 
-func TestCluster_FailureCount(t *testing.T) {
-	ctx := context.Background()
-	ns := "test-ns"
-	clusterName := "test-clusterName"
-
-	s := NewMockClusterStore()
-	mockNode0 := store.NewClusterMockNode()
-	mockNode0.SetRole(store.RoleMaster)
-	mockNode0.Sequence = 104
-	mockNode1 := store.NewClusterMockNode()
-	mockNode1.SetRole(store.RoleSlave)
-	mockNode1.Sequence = 102
-	mockNode2 := store.NewClusterMockNode()
-	mockNode2.SetRole(store.RoleSlave)
-	mockNode2.Sequence = 103
-	mockNode3 := store.NewClusterMockNode()
-	mockNode3.SetRole(store.RoleSlave)
-	mockNode3.Sequence = 101
-
-	clusterInfo := &store.Cluster{
-		Name:    clusterName,
-		Version: *atomic.NewInt64(1),
-		Shards: []*store.Shard{{
-			Nodes: []store.Node{
-				mockNode0, mockNode1, mockNode2, mockNode3,
-			},
-			SlotRanges:       []store.SlotRange{{Start: 0, Stop: 16383}},
-			MigratingSlot:    -1,
-			TargetShardIndex: -1,
-		}},
-	}
-	require.NoError(t, s.CreateCluster(ctx, ns, clusterInfo))
-	cluster := &ClusterChecker{
-		clusterStore: s,
-		namespace:    ns,
-		clusterName:  clusterName,
-		options: ClusterCheckOptions{
-			pingInterval:    time.Second,
-			maxFailureCount: 3,
-		},
-		failureCounts: make(map[string]int64),
-		syncCh:        make(chan struct{}, 1),
-	}
-
-	require.EqualValues(t, 1, clusterInfo.Version.Load())
-	for i := int64(0); i < cluster.options.maxFailureCount-1; i++ {
-		require.EqualValues(t, i+1, cluster.increaseFailureCount(0, mockNode2))
-	}
-	for i := int64(0); i < cluster.options.maxFailureCount; i++ {
-		require.EqualValues(t, i+1, cluster.increaseFailureCount(0, mockNode0))
-	}
-	require.False(t, mockNode0.IsMaster())
-	// mockNode2 should become the new master since its sequence is the largest
-	require.True(t, mockNode2.IsMaster())
-	require.EqualValues(t, 2, clusterInfo.Version.Load())
-
-	require.EqualValues(t, 0, cluster.failureCounts[mockNode2.Addr()])
-	require.True(t, mockNode2.IsMaster())
-
-	// it will be always increase the failure count until the node is back again.
-	for i := int64(0); i < cluster.options.maxFailureCount*2; i++ {
-		require.EqualValues(t, i+1, cluster.increaseFailureCount(0, mockNode3))
-	}
-	cluster.resetFailureCount(mockNode3.ID())
-	require.EqualValues(t, 0, cluster.failureCounts[mockNode3.ID()])
-}
-
 func TestCluster_LoadAndProbe(t *testing.T) {
 	ctx := context.Background()
 	ns := "test-ns"
@@ -172,8 +105,12 @@ func TestCluster_LoadAndProbe(t *testing.T) {
 
 	s := NewMockClusterStore()
 	require.NoError(t, s.CreateCluster(ctx, ns, cluster))
+	probePool := probe.NewProbePool(ctx)
+	defer probePool.Stop()
 
-	clusterProbe := NewClusterChecker(s, ns, clusterName)
+	clusterProbe := NewClusterChecker(probePool, s, ns, clusterName, func() bool {
+		return true
+	})
 	clusterProbe.WithPingInterval(100 * time.Millisecond)
 	clusterProbe.Start()
 	defer clusterProbe.Close()
@@ -223,7 +160,12 @@ func TestCluster_MigrateSlot(t *testing.T) {
 	s := NewMockClusterStore()
 	require.NoError(t, s.CreateCluster(ctx, ns, cluster))
 
-	clusterProbe := NewClusterChecker(s, ns, clusterName)
+	probePool := probe.NewProbePool(ctx)
+	defer probePool.Stop()
+
+	clusterProbe := NewClusterChecker(probePool, s, ns, clusterName, func() bool {
+		return true
+	})
 	clusterProbe.WithPingInterval(100 * time.Millisecond)
 	clusterProbe.Start()
 	defer clusterProbe.Close()

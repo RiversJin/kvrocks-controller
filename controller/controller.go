@@ -31,6 +31,7 @@ import (
 	"github.com/apache/kvrocks-controller/config"
 	"github.com/apache/kvrocks-controller/consts"
 	"github.com/apache/kvrocks-controller/logger"
+	"github.com/apache/kvrocks-controller/probe"
 	"github.com/apache/kvrocks-controller/store"
 )
 
@@ -47,19 +48,33 @@ type Controller struct {
 	mu       sync.Mutex
 	clusters map[string]*ClusterChecker
 
-	wg      sync.WaitGroup
-	state   atomic.Int32
+	probePool *probe.ProbePool
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	state  atomic.Int32
+
+	// when the controller is ready, it will be closed
+	// so any reading from it will be unblocked
+	// just remember don't close it again on the `Close` method
 	readyCh chan struct{}
 	closeCh chan struct{}
 }
 
 func New(s *store.ClusterStore, config *config.ControllerConfig) (*Controller, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{
 		config:       config,
 		clusterStore: s,
 		clusters:     make(map[string]*ClusterChecker),
-		readyCh:      make(chan struct{}, 1),
-		closeCh:      make(chan struct{}),
+
+		probePool: probe.NewProbePool(ctx),
+		ctx:       ctx,
+		cancel:    cancel,
+
+		readyCh: make(chan struct{}),
+		closeCh: make(chan struct{}),
 	}
 	c.state.Store(stateInit)
 	return c, nil
@@ -129,7 +144,7 @@ func (c *Controller) syncLoop(ctx context.Context) {
 		prevTermLeader = c.clusterStore.ID()
 	}
 
-	c.readyCh <- struct{}{}
+	close(c.readyCh)
 	for {
 		select {
 		case <-c.clusterStore.LeaderChange():
@@ -181,12 +196,14 @@ func (c *Controller) buildClusterKey(namespace, clusterName string) string {
 
 func (c *Controller) addCluster(namespace, clusterName string) {
 	key := c.buildClusterKey(namespace, clusterName)
-	if cluster, err := c.getCluster(namespace, clusterName); err == nil && cluster != nil {
+	if cluster, err := c.GetCluster(namespace, clusterName); err == nil && cluster != nil {
 		// if the cluster already exists, just return
 		return
 	}
 
-	cluster := NewClusterChecker(c.clusterStore, namespace, clusterName).
+	cluster := NewClusterChecker(c.probePool, c.clusterStore, namespace, clusterName, func() bool {
+		return c.clusterStore.IsLeader()
+	}).
 		WithPingInterval(time.Duration(c.config.FailOver.PingIntervalSeconds) * time.Second).
 		WithMaxFailureCount(c.config.FailOver.MaxPingCount)
 	cluster.Start()
@@ -196,7 +213,7 @@ func (c *Controller) addCluster(namespace, clusterName string) {
 	c.mu.Unlock()
 }
 
-func (c *Controller) getCluster(namespace, clusterName string) (*ClusterChecker, error) {
+func (c *Controller) GetCluster(namespace, clusterName string) (*ClusterChecker, error) {
 	key := c.buildClusterKey(namespace, clusterName)
 
 	c.mu.Lock()
@@ -239,7 +256,17 @@ func (c *Controller) Close() {
 	}
 
 	c.suspend()
-	close(c.readyCh)
 	close(c.closeCh)
+	c.closeReadyChan()
+	c.probePool.Stop()
+	c.cancel()
 	c.wg.Wait()
+}
+
+func (c *Controller) closeReadyChan() {
+	select {
+	case <-c.readyCh:
+	default:
+		close(c.readyCh)
+	}
 }

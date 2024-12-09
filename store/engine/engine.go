@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/apache/kvrocks-controller/common"
 	"github.com/apache/kvrocks-controller/consts"
 )
 
@@ -44,6 +45,8 @@ type Engine interface {
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) ([]Entry, error)
 
+	ListController() []common.ControllerID
+
 	Close() error
 }
 
@@ -55,6 +58,12 @@ type Mock struct {
 func NewMock() *Mock {
 	return &Mock{
 		values: make(map[string]string),
+	}
+}
+
+func (m *Mock) ListController() []common.ControllerID {
+	return []common.ControllerID{
+		common.NewControllerID("localhost:2379", "defaultIDC"),
 	}
 }
 

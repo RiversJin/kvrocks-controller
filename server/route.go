@@ -38,17 +38,26 @@ import (
 	"github.com/apache/kvrocks-controller/server/middleware"
 )
 
+var redirectWhitelist = []string{
+	"/debug*",
+	"/metrics*",
+	"/swagger*",
+	"/api/v1/namespaces/*/clusters/*/nodes/*/health",
+}
+
 func (srv *Server) initHandlers() {
 	engine := srv.engine
-	engine.Use(middleware.CollectMetrics, func(c *gin.Context) {
+	setStoreContext := func(c *gin.Context) {
 		c.Set(consts.ContextKeyStore, srv.store)
 		c.Next()
-	}, middleware.RedirectIfNotLeader)
-	handler := api.NewHandler(srv.store)
+	}
+
+	engine.Use(middleware.CollectMetrics, setStoreContext, middleware.RedirectIfNotLeader(redirectWhitelist))
+	handler := api.NewHandler(srv.store, srv.controller)
 
 	engine.Any("/debug/pprof/*profile", PProf)
 	engine.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	engine.GET("swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	engine.NoRoute(func(c *gin.Context) {
 		helper.ResponseError(c, consts.ErrNotFound)
 		c.Abort()
@@ -72,6 +81,11 @@ func (srv *Server) initHandlers() {
 			clusters.GET("/:cluster", middleware.RequiredCluster, handler.Cluster.Get)
 			clusters.DELETE("/:cluster", middleware.RequiredCluster, handler.Cluster.Remove)
 			clusters.POST("/:cluster/migrate", middleware.RequiredCluster, handler.Cluster.MigrateSlot)
+
+			nodes := clusters.Group("/:cluster/nodes")
+			{
+				nodes.GET("/:id/health", middleware.RequiredCluster, handler.Cluster.HealthCheck)
+			}
 		}
 
 		shards := clusters.Group("/:cluster/shards")
